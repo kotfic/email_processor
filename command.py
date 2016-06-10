@@ -7,7 +7,7 @@ import os
 DATABASE_PATH = "/home/kotfic/mail_test"
 GMAIL_HEADERS_TO_TAGS = {
     '\\Important': 'important',
-    '\\Starred': 'starred',
+    '\\Starred': 'flagged',
     '\\Sent': 'sent',
     '\\Inbox': 'inbox'}
 
@@ -18,6 +18,7 @@ maildir_tags = set([
     'draft',
     'flagged',
     'passed',
+    'signed',
     'replied'])
 
 
@@ -54,12 +55,15 @@ def sync_gmail_tags(message):
     tags = set(str(t)
                for t in msg.get_tags() if t not in maildir_tags)
     try:
-        keywords = set(toggle_header(t)
-                       for t in msg.mail['X-Keywords'].split(","))
+        keywords = set(toggle_header(t) for t in msg.get_keywords())
     except AttributeError:
-        pass
+        return message
 
-    # Do stuff here
+    for tag in (tags - keywords):
+        message.remove_tag(tag)
+
+    for tag in (keywords - tags):
+        message.add_tag(tag)
 
     return message
 
@@ -73,7 +77,7 @@ def truncate(s, w):
     if s is None or w <= 4:
         return ''
 
-    s = ' '.join(s.split())
+    s = ' '.join(str(s).split())
     return s if len(s) < w else s[:w - 3] + "..."
 
 if __name__ == "__main__":
@@ -84,7 +88,7 @@ if __name__ == "__main__":
 
     # DRYRUN/DEBUG logging related
     if MessageProxy.debug:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.INFO)
         # 48 characters for our leading format info
         # Give 60% of screen to message
         _, COLUMNS = os.popen('stty size', 'r').read().split()
@@ -101,15 +105,16 @@ if __name__ == "__main__":
     for msg in get_messages(query):
         msg.freeze()
 
+        logger.debug("Message: {}".format(msg.get_message_id()))
+
         if MessageProxy.debug:
             pre_pipeline_tags = ", ".join(msg.get_tags())
 
         for fn in pipeline:
             msg = fn(msg)
 
-
         if MessageProxy.debug:
-            logger.debug(log_format.format(
+            logger.info(log_format.format(
                 truncate(msg.mail['From'], fw),
                 truncate(msg.mail['Subject'], sw),
                 pre_pipeline_tags,

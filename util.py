@@ -149,13 +149,19 @@ class MessageProxy(object):
 
         return self._mail
 
+    def get_keywords(self):
+        return [t for t in self.mail['X-Keywords'].split(",") if t is not '']
+
     def add_tag(self, tag, sync_maildir_flags=False):
+        assert tag is not None, "tag is None!"
+        assert tag is not "", "tag is empty!"
+
         if self.debug:
             self._add_tags.append("+" + tag)
 
         if not self.dryrun:
-            return self._msg.add_tag(tag,
-                                     sync_maildir_flags=sync_maildir_flags)
+            return self._msg.add_tag(
+                tag, sync_maildir_flags=sync_maildir_flags)
 
         return notmuch.STATUS.SUCCESS
 
@@ -164,8 +170,8 @@ class MessageProxy(object):
             self._remove_tags.append("-" + tag)
 
         if not self.dryrun:
-            return self._msg.remove_tag(tag,
-                                        sync_maildir_flags=sync_maildir_flags)
+            return self._msg.remove_tag(
+                tag, sync_maildir_flags=sync_maildir_flags)
 
         return notmuch.STATUS.SUCCESS
 
