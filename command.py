@@ -1,8 +1,11 @@
+import notmuch
 from notmuch import Database, Query
 from util import MessageProxy, logger
 import sys
 import logging
 import os
+import functools
+
 
 DATABASE_PATH = "/home/kotfic/mail_test"
 GMAIL_HEADERS_TO_TAGS = {
@@ -51,9 +54,40 @@ def toggle_header(item):
     return item
 
 
+def coroutine(func):
+    def _coroutine(*args, **kwargs):
+        cr = func(*args, **kwargs)
+        cr.next()
+        return cr
+
+    return _coroutine
+
+def stage(func):
+    def _stage(target, *args, **kwargs):
+        try:
+            while True:
+                message = (yield)
+                message = func(message, *args, **kwargs)
+                target.send(message)
+        except GeneratorExit:
+            pass
+    return coroutine(_stage)
+
+def sink(func):
+    def _sink(*args, **kwargs):
+        try:
+            while True:
+                message = (yield)
+                func(message, *args, **kwargs)
+        except GeneratorExit:
+            pass
+    return coroutine(_sink)
+
+
+@stage
 def sync_gmail_tags(message):
-    tags = set(str(t)
-               for t in msg.get_tags() if t not in maildir_tags)
+
+    tags = set(str(t) for t in msg.get_tags() if t not in maildir_tags)
     try:
         keywords = set(toggle_header(t) for t in msg.get_keywords())
     except AttributeError:
@@ -68,9 +102,20 @@ def sync_gmail_tags(message):
     return message
 
 
+
+@stage
 def remove_new(message):
     message.remove_tag("new")
     return message
+
+@sink
+def log_output(message):
+    if MessageProxy.debug:
+        logger.info(log_format.format(
+            truncate(msg.mail['From'], fw),
+            truncate(msg.mail['Subject'], sw),
+            "",
+            ", ".join(msg._add_tags + msg._remove_tags)))
 
 
 def truncate(s, w):
@@ -100,24 +145,31 @@ if __name__ == "__main__":
 
     logger.debug("Query: {}".format(query))
 
-    pipeline = [sync_gmail_tags, remove_new]
+    pipeline = [sync_gmail_tags, remove_new, log_output]
+    pipeline = sync_gmail_tags(remove_new(log_output()))
+    try:
+        for msg in get_messages(query):
+            msg.freeze()
 
-    for msg in get_messages(query):
-        msg.freeze()
+            pipeline.send(msg)
 
-        logger.debug("Message: {}".format(msg.get_message_id()))
 
-        if MessageProxy.debug:
-            pre_pipeline_tags = ", ".join(msg.get_tags())
+#        logger.debug("Message: {}".format(msg.get_message_id()))
 
-        for fn in pipeline:
-            msg = fn(msg)
+#        if MessageProxy.debug:
+#            pre_pipeline_tags = ", ".join(msg.get_tags())
 
-        if MessageProxy.debug:
-            logger.info(log_format.format(
-                truncate(msg.mail['From'], fw),
-                truncate(msg.mail['Subject'], sw),
-                pre_pipeline_tags,
-                ", ".join(msg._add_tags + msg._remove_tags)))
+#        for fn in pipeline:
+#            msg = fn(msg)
 
-        msg.thaw()
+#         if MessageProxy.debug:
+#             logger.info(log_format.format(
+#                 truncate(msg.mail['From'], fw),
+#                 truncate(msg.mail['Subject'], sw),
+#                 pre_pipeline_tags,
+#                 ", ".join(msg._add_tags + msg._remove_tags)))
+
+            msg.thaw()
+    except notmuch.errors.NullPointerError:
+        logger.error("Query returned no results")
+        pipeline.close()
