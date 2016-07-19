@@ -22,12 +22,25 @@ import codecs
 import re
 import os
 import logging
+import functools
 
 logger = logging.getLogger('email_parser')
 ch = logging.StreamHandler()
 formatter = logging.Formatter('[%(asctime)s] - [%(levelname)-5s] - %(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+
+class Pipeline(object):
+    """Accepts a list of stages/sink and produces a coroutine pipeline for
+    message processing."""
+
+    def __init__(self, pipeline):
+        self.pipeline = functools.reduce(
+            lambda a, b: b(a), pipeline[::-1])
+
+    def send(self, msg):
+        self.pipeline.send(msg)
 
 
 class MessageProxy(object):
@@ -41,8 +54,8 @@ class MessageProxy(object):
         self._mail = None
         self._body = None
 
-        self._add_tags = []
-        self._remove_tags = []
+        self._add_tags = set([])
+        self._remove_tags = set([])
 
     signature_line_re = re.compile(r'^((--)|(__)|(==)|(\*\*)|(##))')
 
@@ -57,6 +70,7 @@ class MessageProxy(object):
         :type  max_signature_size: int
         :returns: the mail with signatures stripped off
         :rtype:   :class:`list` of :class:`str`
+
 
         >>> strip_signatures([
         ...     'Huhu',
@@ -157,7 +171,7 @@ class MessageProxy(object):
         assert tag is not "", "tag is empty!"
 
         if self.debug:
-            self._add_tags.append("+" + tag)
+            self._add_tags = self._add_tags | (set(["+" + tag]))
 
         if not self.dryrun:
             return self._msg.add_tag(
@@ -167,7 +181,7 @@ class MessageProxy(object):
 
     def remove_tag(self, tag, sync_maildir_flags=False):
         if self.debug:
-            self._remove_tags.append("-" + tag)
+            self._remove_tags =  self._remove_tags | set(["-" + tag])
 
         if not self.dryrun:
             return self._msg.remove_tag(

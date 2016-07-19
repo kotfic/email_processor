@@ -1,6 +1,6 @@
 import notmuch
 from notmuch import Database, Query
-from util import MessageProxy, logger
+from util import MessageProxy, logger, Pipeline
 import sys
 import logging
 import os
@@ -81,7 +81,9 @@ def sink(func):
                 func(message, *args, **kwargs)
         except GeneratorExit:
             pass
-    return coroutine(_sink)
+
+    # Syncs should always be primed
+    return coroutine(_sink)()
 
 
 @stage
@@ -114,8 +116,8 @@ def log_output(message):
         logger.info(log_format.format(
             truncate(msg.mail['From'], fw),
             truncate(msg.mail['Subject'], sw),
-            "",
-            ", ".join(msg._add_tags + msg._remove_tags)))
+            str(message._msg.get_tags()),
+            ", ".join(msg._add_tags | msg._remove_tags)))
 
 
 def truncate(s, w):
@@ -145,29 +147,13 @@ if __name__ == "__main__":
 
     logger.debug("Query: {}".format(query))
 
-    pipeline = [sync_gmail_tags, remove_new, log_output]
-    pipeline = sync_gmail_tags(remove_new(log_output()))
+    pipeline = Pipeline([sync_gmail_tags, remove_new, log_output])
+
     try:
         for msg in get_messages(query):
             msg.freeze()
 
             pipeline.send(msg)
-
-
-#        logger.debug("Message: {}".format(msg.get_message_id()))
-
-#        if MessageProxy.debug:
-#            pre_pipeline_tags = ", ".join(msg.get_tags())
-
-#        for fn in pipeline:
-#            msg = fn(msg)
-
-#         if MessageProxy.debug:
-#             logger.info(log_format.format(
-#                 truncate(msg.mail['From'], fw),
-#                 truncate(msg.mail['Subject'], sw),
-#                 pre_pipeline_tags,
-#                 ", ".join(msg._add_tags + msg._remove_tags)))
 
             msg.thaw()
     except notmuch.errors.NullPointerError:
