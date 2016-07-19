@@ -5,13 +5,15 @@ import sys
 import logging
 import os
 import functools
+import click
 
 
-DATABASE_PATH = "/home/kotfic/mail_test"
+DATABASE_PATH = "/home/kotfic/mail"
 GMAIL_HEADERS_TO_TAGS = {
     '\\Important': 'important',
     '\\Starred': 'flagged',
     '\\Sent': 'sent',
+    '\\Draft': 'draft',
     '\\Inbox': 'inbox'}
 
 GMAIL_TAGS_TO_HEADERS = {v: k for k, v in GMAIL_HEADERS_TO_TAGS.items()}
@@ -89,9 +91,9 @@ def sink(func):
 @stage
 def sync_gmail_tags(message):
 
-    tags = set(str(t) for t in msg.get_tags() if t not in maildir_tags)
+    tags = set(str(t) for t in message.get_tags() if t not in maildir_tags)
     try:
-        keywords = set(toggle_header(t) for t in msg.get_keywords())
+        keywords = set(toggle_header(t) for t in message.get_keywords())
     except AttributeError:
         return message
 
@@ -104,36 +106,13 @@ def sync_gmail_tags(message):
     return message
 
 
-
 @stage
 def remove_new(message):
     message.remove_tag("new")
     return message
 
-@sink
-def log_output(message):
-    if MessageProxy.debug:
-        logger.info(log_format.format(
-            truncate(msg.mail['From'], fw),
-            truncate(msg.mail['Subject'], sw),
-            str(message._msg.get_tags()),
-            ", ".join(msg._add_tags | msg._remove_tags)))
 
-
-def truncate(s, w):
-    if s is None or w <= 4:
-        return ''
-
-    s = ' '.join(str(s).split())
-    return s if len(s) < w else s[:w - 3] + "..."
-
-if __name__ == "__main__":
-    try:
-        query = sys.argv[1]
-    except IndexError:
-        query = 'path:"**"'
-
-    # DRYRUN/DEBUG logging related
+def log_output():
     if MessageProxy.debug:
         logger.setLevel(logging.INFO)
         # 48 characters for our leading format info
@@ -144,18 +123,58 @@ if __name__ == "__main__":
         sw = int((int(COLUMNS) - 50)  * 0.55)
         ptw = int((int(COLUMNS) - 50) * 0.1)
         log_format = "{0: <" + str(fw) + "} :: {1: <" + str(sw) + "} :: {2: <" + str(ptw) + "} :: {3}"
+    else:
+        log_format = ""
 
-    logger.debug("Query: {}".format(query))
+    @sink
+    def _log_output(message):
+        if MessageProxy.debug:
+            logger.info(log_format.format(
+                truncate(message.mail['From'], fw),
+                truncate(message.mail['Subject'], sw),
+                str(message._msg.get_tags()),
+                ", ".join(message._add_tags | message._remove_tags)))
+    return _log_output
 
-    pipeline = Pipeline([sync_gmail_tags, remove_new, log_output])
 
+def truncate(s, w):
+    if s is None or w <= 4:
+        return ''
+
+    s = ' '.join(str(s).split())
+    return s if len(s) < w else s[:w - 3] + "..."
+
+
+def process_pipeline(query, pipeline):
     try:
         for msg in get_messages(query):
             msg.freeze()
-
             pipeline.send(msg)
-
             msg.thaw()
+
     except notmuch.errors.NullPointerError:
         logger.error("Query returned no results")
         pipeline.close()
+
+@click.group()
+@click.option('--debug/--no-debug', default=False)
+@click.option('--dryrun/--no-dryrun', default=False)
+def main(dryrun, debug):
+    MessageProxy.debug = debug
+    MessageProxy.dryrun = dryrun
+
+    if debug:
+        logger.setLevel(logging.DEBUG)
+
+
+
+@main.command()
+@click.argument('query', default='tag:new and path:"**"')
+def sync_tags(query):
+    logger.debug("Query: {}".format(query))
+    process_pipeline(query, Pipeline([sync_gmail_tags,
+                                      remove_new,
+                                      log_output()]))
+
+if __name__ == "__main__":
+    main()
