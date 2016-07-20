@@ -164,7 +164,24 @@ class MessageProxy(object):
         return self._mail
 
     def get_keywords(self):
-        return [t for t in self.mail['X-Keywords'].split(",") if t is not '']
+
+        if (3, 1) <= sys.version_info < (3, 2):
+            fp = codecs.open(self._msg.get_filename(),
+                             'rb', 'utf-8', errors='replace')
+        else:
+            fp = open(self._msg.get_filename(), 'rb')
+        try:
+            m = fp.read()
+
+            start = m.find("X-Keywords:") + 11
+            end = m.find("\n", start)
+
+            return m[start:end].trim().split(",")
+        finally:
+            fp.close()
+
+    def set_keywords(self, keywords):
+        self.mail['X-Keywords'] = ",".join(keywords)
 
     def add_tag(self, tag, sync_maildir_flags=False):
         assert tag is not None, "tag is None!"
