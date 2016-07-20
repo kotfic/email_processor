@@ -4,6 +4,7 @@ from util import MessageProxy, logger, Pipeline
 import sys
 import logging
 import os
+import subprocess
 import functools
 import click
 
@@ -26,9 +27,10 @@ maildir_tags = set([
     'signed',
     'replied'])
 
+exclude_sync_tags = set([
+    'new'
+]) | maildir_tags
 
-MessageProxy.debug = True
-MessageProxy.dryrun = True
 
 def db():
     return Database(DATABASE_PATH, create=False, mode=Database.MODE.READ_WRITE)
@@ -91,19 +93,25 @@ def sink(func):
 @stage
 def sync_gmail_tags(message):
 
-    tags = set(str(t) for t in message.get_tags() if t not in maildir_tags)
+    tags = set(str(t) for t in message.get_tags()
+               if t not in exclude_sync_tags)
     try:
         keywords = set(toggle_header(t) for t in message.get_keywords())
     except AttributeError:
         return message
 
-    for tag in (tags - keywords):
-        message.remove_tag(tag)
+#    for tag in (tags - keywords):
+#        message.remove_tag(tag)
 
     for tag in (keywords - tags):
         message.add_tag(tag)
 
     return message
+
+
+def sync_gmail_keywords(message):
+    keywords = set(toggle_header(t) for t in message.get_keywords())
+
 
 
 @stage
@@ -117,12 +125,16 @@ def log_output():
         logger.setLevel(logging.INFO)
         # 48 characters for our leading format info
         # Give 60% of screen to message
-        _, COLUMNS = os.popen('stty size', 'r').read().split()
+        try:
+            _, COLUMNS = subprocess.check_output(['stty', 'size']).split()
 
-        fw = int((int(COLUMNS) - 50)  * 0.15)
-        sw = int((int(COLUMNS) - 50)  * 0.55)
-        ptw = int((int(COLUMNS) - 50) * 0.1)
-        log_format = "{0: <" + str(fw) + "} :: {1: <" + str(sw) + "} :: {2: <" + str(ptw) + "} :: {3}"
+            fw = int((int(COLUMNS) - 50)  * 0.15)
+            sw = int((int(COLUMNS) - 50)  * 0.55)
+            ptw = int((int(COLUMNS) - 50) * 0.1)
+            log_format = "{0: <" + str(fw) + "} :: {1: <" + str(sw) + "} :: {2: <" + str(ptw) + "} :: {3}"
+        except Exception:
+            fw, sw, ptw = None, None, None
+            log_format = "{0} :: {1} :: {2} :: {3}"
     else:
         log_format = ""
 
@@ -138,6 +150,9 @@ def log_output():
 
 
 def truncate(s, w):
+    if w is None:
+        return s
+
     if s is None or w <= 4:
         return ''
 
@@ -165,8 +180,6 @@ def main(dryrun, debug):
 
     if debug:
         logger.setLevel(logging.DEBUG)
-
-
 
 @main.command()
 @click.argument('query', default='tag:new and path:"**"')
