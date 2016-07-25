@@ -163,25 +163,32 @@ class MessageProxy(object):
 
         return self._mail
 
+    def _get_keywords(self, s):
+        start = s.find("X-Keywords:")
+        if start == -1:
+            raise AttributeError("X-Keywords header not found")
+
+        end = s.find("\n", start)
+        return start + len("X-Keywords:"), end
+
     def get_keywords(self):
+        with open(self._msg.get_filename(), 'rb') as fh:
+            m = fh.read()
 
-        if (3, 1) <= sys.version_info < (3, 2):
-            fp = codecs.open(self._msg.get_filename(),
-                             'rb', 'utf-8', errors='replace')
-        else:
-            fp = open(self._msg.get_filename(), 'rb')
-        try:
-            m = fp.read()
+        start, end = self._get_keywords(m)
 
-            start = m.find("X-Keywords:") + 11
-            end = m.find("\n", start)
-
-            return m[start:end].trim().split(",")
-        finally:
-            fp.close()
+        return [t for t in m[start:end].strip().split(",") if t != '']
 
     def set_keywords(self, keywords):
-        self.mail['X-Keywords'] = ",".join(keywords)
+        with open(self._msg.get_filename(), 'r+b') as fh:
+            m = fh.read()
+
+            start, end = self._get_keywords(m)
+            fh.seek(0)
+            fh.write(m[:start] + ' ' +  b','.join(keywords) + m[end:])
+            fh.truncate()
+
+        self._mail = None
 
     def add_tag(self, tag, sync_maildir_flags=False):
         assert tag is not None, "tag is None!"

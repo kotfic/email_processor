@@ -100,24 +100,51 @@ def sync_gmail_tags(message):
     except AttributeError:
         return message
 
-#    for tag in (tags - keywords):
-#        message.remove_tag(tag)
+    for tag in (tags - keywords):
+        message.remove_tag(tag)
 
     for tag in (keywords - tags):
         message.add_tag(tag)
 
     return message
 
-
+@stage
 def sync_gmail_keywords(message):
-    keywords = set(toggle_header(t) for t in message.get_keywords())
+    try:
+        keywords = set(toggle_header(t) for t in message.get_keywords())
+    except AttributeError:
+        return message
 
+    tags = set(str(t) for t in message.get_tags()
+               if t not in exclude_sync_tags)
 
+    if not tags ^ keywords:
+        return message
+
+    if MessageProxy.debug:
+        logger.info("{} :: {} :: {} :: {}".format(
+            message.mail['From'], message.mail['Subject'],
+            ','.join(keywords), ','.join(tags)))
+
+    if not MessageProxy.dryrun:
+        message.set_keywords([toggle_header(t) for t in list(tags)])
+
+    return message
 
 @stage
 def remove_new(message):
     message.remove_tag("new")
     return message
+
+@stage
+def add_mention(message):
+    if '@kotfic' in message.body:
+        message.add_tag("mention")
+    return message
+
+@sink
+def drop(message):
+    pass
 
 
 def log_output():
@@ -183,11 +210,20 @@ def main(dryrun, debug):
 
 @main.command()
 @click.argument('query', default='tag:new and path:"**"')
-def sync_tags(query):
+def sync(query):
     logger.debug("Query: {}".format(query))
     process_pipeline(query, Pipeline([sync_gmail_tags,
+                                      add_mention,
                                       remove_new,
                                       log_output()]))
+
+@main.command()
+@click.argument('query', default='tag:new and path:"**"')
+def sync_keywords(query):
+    logger.debug("Query: {}".format(query))
+    process_pipeline(query, Pipeline([sync_gmail_keywords,
+                                      drop]))
+
 
 if __name__ == "__main__":
     main()
